@@ -23,6 +23,6 @@ Both scripts use a large multi-layer perceptron (MLP) with 32 hidden layers (eac
 | ------------------------ | ----------- | ----------- |
 | Full                     | N/A         | 0.032591    |
 | Layer-by-Layer           | 0.034961    | 0.021093    |
-| Pipelined (chunk_size=4) | 0.018758    | 0.019857    |
+| Pipelined (chunk_size=4) | 0.018758    | 0.017502    |
 
 The (relevent) speed is highly dependent on PCIE bandwidth, as Move requires copying from GPU to CPU. Though the overhead is small when we have a high bandwidth.

@@ -165,7 +165,7 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
         with torch.cuda.stream(offload_stream):
             offload_stream.wait_event(compute_done_events[i])
             move_layers_to_device(net_chunks[i], "cpu", non_blocking=True)
-        # Ensure that any further load_stream operations wait until offloading is done.
+        # Ensure that any further load_stream operations wait until offloading is done, as we have limited GPU memory.
         load_stream.wait_stream(offload_stream)
 
     # 4) Once all chunks are computed, move the final result back to CPU.

@@ -169,6 +169,7 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
         with torch.cuda.stream(comp_stream):
             y = run_chunk(gpu_chunks[i], y)
             compute_done_events[i].record(comp_stream)
+            gpu_chunks[i] = None  # Clear the reference immediately after use.
 
         # c) Preload the next chunk (if any) on the load stream.
         if i + 1 < num_chunks:
@@ -177,10 +178,6 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
                 # Record an event for when the next chunk is loaded.
                 load_done_events[i + 1] = torch.cuda.Event(enable_timing=False)
                 load_done_events[i + 1].record(load_stream)
-
-        # d) Once the compute for chunk i is done, safely release its GPU copy.
-        comp_stream.wait_event(compute_done_events[i])
-        gpu_chunks[i] = None  # Clear the reference.
         # Optionally call torch.cuda.empty_cache() if needed.
 
     # 4) Wait for the last chunk's computation and bring the result back to CPU.
