@@ -69,13 +69,10 @@ def full_forward(model, x_cpu):
             return model(x_cpu)
 
     device = torch.device("cuda")
-    model_copy = copy.deepcopy(model).to(device)
     with torch.no_grad():
         x = x_cpu.to(device)
-        y = model_copy(x)
+        y = model(x)
         y = y.to("cpu")
-    model_copy = None
-    torch.cuda.empty_cache()
     return y
 
 
@@ -207,17 +204,21 @@ if __name__ == "__main__":
 
     # Warm-up
     for _ in range(10):
+        model = model.cuda()
         _ = full_forward(model, x_cpu)
+        model = model.cpu()
         _ = layer_by_layer_inference(model, x_cpu)
         _ = pipelined_inference(model, x_cpu, chunk_size=4)
 
     # Benchmark
+    model = model.cuda()
     torch.cuda.synchronize()
     start = time.time()
     for _ in range(100):
         out = full_forward(model, x_cpu)
     torch.cuda.synchronize()
     end = time.time()
+    model = model.cpu()
     # print("Output shape:", out.shape)
     # print("Sample output:", out[0, :5])  # just to verify
     print(f"Average time (full): {(end - start)/100:.6f} seconds")
