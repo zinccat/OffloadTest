@@ -40,16 +40,75 @@ def chunked_layers(model, chunk_size=4):
         chunks.append(all_layers[i : i + chunk_size])
     return chunks
 
+def clone_module(module, memo=None):
+    """
+    [[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/utils.py)
+    Creates a clone of a module such that the parameters/buffers/submodules 
+    are created using torch.clone(). The computational graph is kept, so you 
+    can compute the derivatives of the new module's parameters with respect 
+    to the original parameters.
+    """
+    if memo is None:
+        # Maps original data_ptr to the cloned tensor.
+        # Useful when a Module uses parameters from another Module.
+        memo = {}
+
+    if not isinstance(module, torch.nn.Module):
+        return module
+
+    # Create a copy of the module (shallow copy)
+    clone = module.__new__(type(module))
+    clone.__dict__ = module.__dict__.copy()
+    clone._parameters = clone._parameters.copy()
+    clone._buffers = clone._buffers.copy()
+    clone._modules = clone._modules.copy()
+
+    # Re-write all parameters
+    if hasattr(clone, '_parameters'):
+        for param_key, param in module._parameters.items():
+            if param is not None:
+                # Use the data_ptr() as a unique key for this tensor
+                param_ptr = param.data_ptr()
+                if param_ptr in memo:
+                    clone._parameters[param_key] = memo[param_ptr]
+                else:
+                    cloned = param.clone()
+                    if cloned.requires_grad:
+                        cloned.retain_grad()  # Make sure .grad will be populated
+                    clone._parameters[param_key] = cloned
+                    memo[param_ptr] = cloned
+
+    # Handle buffers that require gradients
+    if hasattr(clone, '_buffers'):
+        for buffer_key, buff in module._buffers.items():
+            if buff is not None and buff.requires_grad:
+                buff_ptr = buff.data_ptr()
+                if buff_ptr in memo:
+                    clone._buffers[buffer_key] = memo[buff_ptr]
+                else:
+                    cloned = buff.clone()
+                    if cloned.requires_grad:
+                        cloned.retain_grad()
+                    clone._buffers[buffer_key] = cloned
+                    memo[buff_ptr] = cloned  # Use buff_ptr, not param_ptr
+
+    # Recurse for each submodule
+    if hasattr(clone, '_modules'):
+        for module_key in clone._modules:
+            clone._modules[module_key] = clone_module(
+                module._modules[module_key],
+                memo=memo,
+            )
+
+    return clone
+
+
 def copy_layers_to_device(layers, device, non_blocking=True):
     """
-    Create copies (via deepcopy) of a list of layers and move them to the specified device.
+    Create copies (via clone_module) of a list of layers and move them to the specified device.
     The original layers on CPU remain unchanged.
     """
-    new_layers = []
-    for layer in layers:
-        layer_copy = copy.deepcopy(layer).to(device, non_blocking=non_blocking)  # Create a separate copy.
-        new_layers.append(layer_copy)
-    return new_layers
+    return [clone_module(layer).to(device, non_blocking=non_blocking) for layer in layers]
 
 def run_chunk(chunk, x):
     """
@@ -104,7 +163,7 @@ def layer_by_layer_inference(model, x_cpu):
     with torch.no_grad():
         for layer in model.net:
             # Move layer to GPU
-            layer_copy = copy.deepcopy(layer)
+            layer_copy = clone_module(layer)
             layer_copy.to(device)
             # Forward pass
             x = layer_copy(x)
