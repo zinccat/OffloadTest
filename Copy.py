@@ -137,6 +137,7 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
     # Create two streams for overlapping loading and computation.
     load_stream = torch.cuda.Stream()
     comp_stream = torch.cuda.Stream()
+    cleanup_stream = torch.cuda.Stream()
 
     # Create events to signal when compute is done on a chunk.
     compute_done_events = [torch.cuda.Event(enable_timing=False) for _ in range(num_chunks)]
@@ -166,15 +167,20 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
         with torch.cuda.stream(comp_stream):
             y = run_chunk(gpu_chunks[i], y)
             compute_done_events[i].record(comp_stream)
-            gpu_chunks[i] = None  # Clear the reference immediately after use.
 
-        # c) Preload the next chunk (if any) on the load stream.
+        # c) Preload the next chunk (if any) on the load stream
         if i + 1 < num_chunks:
             with torch.cuda.stream(load_stream):
                 gpu_chunks[i + 1] = copy_layers_to_device(net_chunks[i + 1], device, non_blocking=True)
                 # Record an event for when the next chunk is loaded.
                 load_done_events[i + 1] = torch.cuda.Event(enable_timing=False)
                 load_done_events[i + 1].record(load_stream)
+
+        # d) Release the current chunk's GPU copy
+        with torch.cuda.stream(cleanup_stream):
+            cleanup_stream.wait_event(compute_done_events[i])
+            gpu_chunks[i] = None
+        
         # Optionally call torch.cuda.empty_cache() if needed.
 
     # 4) Wait for the last chunk's computation and bring the result back to CPU.
@@ -185,6 +191,7 @@ def pipelined_inference(model, x_cpu, chunk_size=4):
     # Synchronize the streams.
     comp_stream.synchronize()
     load_stream.synchronize()
+    cleanup_stream.synchronize()
 
     return y
 
